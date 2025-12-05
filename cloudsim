@@ -1,0 +1,241 @@
+cloud sim imstallation link
+==========================
+https://storage.googleapis.com/google-code-archive-downloads/v2/code.google.com/cloudsim/cloudsim-3.0.3.zip
+=============================
+
+SimpleCloudSimExample.java
+--------------------------
+import org.cloudbus.cloudsim.*;
+import org.cloudbus.cloudsim.core.CloudSim;
+import org.cloudbus.cloudsim.provisioners.BwProvisionerSimple;
+import org.cloudbus.cloudsim.provisioners.PeProvisionerSimple;
+import org.cloudbus.cloudsim.provisioners.RamProvisionerSimple;
+
+import java.util.*;
+
+public class SimpleCloudSimExample {
+
+    public static void main(String[] args) {
+
+        System.out.println("Starting CloudSim...");
+
+        // 1) Initialize CloudSim
+        int users = 1;
+        Calendar calendar = Calendar.getInstance();
+        boolean traceFlag = false;
+        CloudSim.init(users, calendar, traceFlag);
+
+        // 2) Create Hosts
+        List<Host> hostList = new ArrayList<>();
+
+        int hostId = 0;
+        int ram = 2048;
+        long storage = 1000000;
+        int bw = 10000;
+
+        // Create 2 hosts
+        for (int i = 0; i < 2; i++) {
+            List<Pe> peList = new ArrayList<>();
+            peList.add(new Pe(0, new PeProvisionerSimple(1000))); // CPU
+
+            hostList.add(
+                    new Host(
+                            hostId++,
+                            new RamProvisionerSimple(ram),
+                            new BwProvisionerSimple(bw),
+                            storage,
+                            peList,
+                            new VmSchedulerSpaceShared(peList)
+                    )
+            );
+        }
+
+        // 3) Datacenter Characteristics
+        DatacenterCharacteristics characteristics = new DatacenterCharacteristics(
+                "x86",
+                "Linux",
+                "Xen",
+                hostList,
+                10, 3, 0.05, 0.001, 0.0
+        );
+
+        // 4) Create Datacenter with custom scheduler
+        Datacenter datacenter = null;
+
+        try {
+            datacenter = new Datacenter(
+                    "MyDatacenter",
+                    characteristics,
+                    new MySimpleScheduler(hostList),   // CUSTOM SCHEDULER
+                    new LinkedList<>(),
+                    0
+            );
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        // 5) Create Broker
+        DatacenterBroker broker = null;
+
+        try {
+            broker = new DatacenterBroker("MyBroker");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        int brokerId = broker.getId();
+
+        // 6) Create VM
+        List<Vm> vmList = new ArrayList<>();
+        Vm vm1 = new Vm(0, brokerId, 500, 1, 512, 1000, 10000, "Xen", new CloudletSchedulerTimeShared());
+        Vm vm2 = new Vm(1, brokerId, 500, 1, 512, 1000, 10000, "Xen", new CloudletSchedulerTimeShared());
+
+        vmList.add(vm1);
+        vmList.add(vm2);
+        broker.submitVmList(vmList);
+
+        // 7) Create Cloudlets
+        List<Cloudlet> cloudletList = new ArrayList<>();
+        UtilizationModel utilizationModel = new UtilizationModelFull();
+
+        Cloudlet cloudlet1 = new Cloudlet(0, 40000, 1, 300, 300, utilizationModel, utilizationModel, utilizationModel);
+        cloudlet1.setUserId(brokerId);
+
+        Cloudlet cloudlet2 = new Cloudlet(1, 40000, 1, 300, 300, utilizationModel, utilizationModel, utilizationModel);
+        cloudlet2.setUserId(brokerId);
+
+        cloudletList.add(cloudlet1);
+        cloudletList.add(cloudlet2);
+        broker.submitCloudletList(cloudletList);
+
+        // 8) Set VMs for cloudlets
+        broker.bindCloudletToVm(0, 0);
+        broker.bindCloudletToVm(1, 1);
+
+        // 9) Start Simulation
+        CloudSim.startSimulation();
+        CloudSim.stopSimulation();
+
+        // 10) Results
+        List<Cloudlet> results = broker.getCloudletReceivedList();
+        for (Cloudlet c : results) {
+            System.out.println("\nCloudlet " + c.getCloudletId() +
+                    " finished on VM " + c.getVmId() +
+                    " with status: " + c.getStatus());
+        }
+
+        System.out.println("\nSimulation Completed Successfully!");
+    }
+}
+=========================================================================================================
+MySimpleScheduler.java
+========================
+import org.cloudbus.cloudsim.Host;
+import org.cloudbus.cloudsim.Vm;
+import org.cloudbus.cloudsim.VmAllocationPolicy;
+
+import java.util.List;
+import java.util.Map;
+
+public class MySimpleScheduler extends VmAllocationPolicy {
+
+    public MySimpleScheduler(List<? extends Host> list) {
+        super(list);
+    }
+
+    // Allocate VM to host with maximum free RAM
+    @Override
+    public boolean allocateHostForVm(Vm vm) {
+        Host bestHost = null;
+        long maxFreeRam = 0;
+
+        for (Host host : getHostList()) {
+            long freeRam = host.getRamProvisioner().getAvailableRam();
+
+            if (freeRam >= vm.getRam() && freeRam > maxFreeRam) {
+                bestHost = host;
+                maxFreeRam = freeRam;
+            }
+        }
+
+        if (bestHost != null) {
+            System.out.println("VM " + vm.getId() + " allocated to Host " + bestHost.getId());
+            return bestHost.vmCreate(vm);
+        }
+
+        System.out.println("No host found for VM " + vm.getId());
+        return false;
+    }
+
+    @Override
+    public void deallocateHostForVm(Vm vm) {
+        if (vm.getHost() != null) {
+            vm.getHost().vmDestroy(vm);
+        }
+    }
+
+    @Override
+    public Host getHost(Vm vm) {
+        return vm.getHost();
+    }
+
+    @Override
+    public Host getHost(int vmId, int userId) {
+        for (Host host : getHostList()) {
+            if (host.getVm(vmId, userId) != null)
+                return host;
+        }
+        return null;
+    }
+
+    // ----- REQUIRED: implement optimizeAllocation -----
+    // Simple beginner implementation: no optimization, so return null.
+    @Override
+    public List<Map<String, Object>> optimizeAllocation(List<? extends Vm> vmList) {
+        // If you want, return an empty list instead of null:
+        // return new ArrayList<Map<String,Object>>();
+        return null; // no optimization performed
+    }
+
+	@Override
+	public boolean allocateHostForVm(Vm arg0, Host arg1) {
+		// TODO Auto-generated method stub
+		return false;
+	}
+}
+================================================================================
+output
+================================================================================
+Starting CloudSim...
+Initialising...
+Starting CloudSim version 3.0
+MyDatacenter is starting...
+MyBroker is starting...
+Entities started.
+0.0: MyBroker: Cloud Resource List received with 1 resource(s)
+0.0: MyBroker: Trying to Create VM #0 in MyDatacenter
+0.0: MyBroker: Trying to Create VM #1 in MyDatacenter
+VM 0 allocated to Host 0
+VM 1 allocated to Host 1
+0.1: MyBroker: VM #0 has been created in Datacenter #2, Host #0
+0.1: MyBroker: VM #1 has been created in Datacenter #2, Host #1
+0.1: MyBroker: Sending cloudlet 0 to VM #0
+0.1: MyBroker: Sending cloudlet 1 to VM #1
+80.1: MyBroker: Cloudlet 0 received
+80.1: MyBroker: Cloudlet 1 received
+80.1: MyBroker: All Cloudlets executed. Finishing...
+80.1: MyBroker: Destroying VM #0
+80.1: MyBroker: Destroying VM #1
+MyBroker is shutting down...
+Simulation: No more future events
+CloudInformationService: Notify all CloudSim entities for shutting down.
+MyDatacenter is shutting down...
+MyBroker is shutting down...
+Simulation completed.
+Simulation completed.
+
+Cloudlet 0 finished on VM 0 with status: 4
+
+Cloudlet 1 finished on VM 1 with status: 4
+
+Simulation Completed Successfully!
